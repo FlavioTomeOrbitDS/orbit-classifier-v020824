@@ -10,10 +10,8 @@ import re
 import os
 import datetime
 import difflib
-from collections import Counter
-from nltk.corpus import stopwords
-from nltk.tokenize import word_tokenize
-import nltk
+
+
 
 df_resumos = pd.DataFrame()
 
@@ -166,7 +164,7 @@ async def tags_analysis(lista_de_comentarios, tema_principal, contexto, sentimen
     # Gera a lista de tarefas para fazer as chamadas assíncronas para a API
     tasks = []
     for mensagem in lista_mensagens:
-        tasks.append(openAiApiCall(mensagem, 'gpt-4o-mini', 0.1))
+        tasks.append(openAiApiCall(mensagem, 'gpt-4o', 0.1))
     
 
     # Lista para armazenar as respostas
@@ -286,7 +284,7 @@ async def refina_categorias(texto):
     print(f"##### Refinando as Categorias...{get_current_datetime()}")
     mensagem = geraMensagens_classificação_refinamento(texto)
     
-    resposta = await openAiApiCall(mensagem, 'gpt-4o-mini',0.1)        
+    resposta = await openAiApiCall(mensagem, 'gpt-4',0.1)        
                  
     df = formata_categorias(resposta)
     
@@ -458,8 +456,7 @@ async def analise_de_sentimentos(df):
     #Análise de sentimentos
     print(f"##### Fazendo a analise de sentimentos...{get_current_datetime()}")
     df = await (process_sentiments(df))    
-    df['Sentimento'] = df['Sentimento'].str.lower()    
-    #df.to_excel("teste _sentimentos_2.xlsx")     
+    df['Sentimento'] = df['Sentimento'].str.lower()        
     
     return df                       
 
@@ -560,8 +557,7 @@ async def classificacao_com_sentimento(df, tema, context):
     df = await analise_de_sentimentos(df)
 
     print("### Sentimentos:")                    
-    print(df)
-    df.to_excel("sentimentos.xlsx")
+    print(df)    
     
     sentimentos = ["positivo", "neutro", "negativo"]
     all_data = []
@@ -667,54 +663,7 @@ def generate_js_dictionary_with_sentiment(file_path='outputs/text_classification
 
 
 
-#-------------------------------- CONTAGEM DE PAALAVRAS ------------------------------------------    
-def extrai_palavras_comuns(df, tema_princial):
 
-    """
-    Agrupa os Textos por Categoria e extrai as palavras mais comuns de cada categoria,
-    desconsiderando stopwords e palavras relacionadas ao tema principal.
-
-    Args:
-        df: DataFrame contendo as colunas 'Texto' e 'Categoria'.
-        tema_princial: Lista de palavras a serem desconsideradas.
-
-    Returns:
-        Um dicionário JSON onde as chaves são as categorias e os valores são as listas
-        com as palavras mais comuns de cada categoria.
-    """
-
-    nltk.download('punkt')
-    nltk.download('stopwords')
-    
-    # Obter stopwords em português
-    stop_words = set(stopwords.words('portuguese'))
-
-    # Agrupar os Textos por Categoria
-    grouped = df.groupby('Categoria')['Texto'].apply(list)
-
-    # Inicializar o dicionário para armazenar as palavras mais comuns
-    palavras_comuns_por_categoria = {}
-
-    # Iterar sobre cada categoria
-    for categoria, textos in grouped.items():
-        # Concatenar todos os textos da categoria em uma única string
-        todos_textos = ' '.join(textos)
-
-        # Tokenizar os textos e remover stopwords e palavras do tema principal
-        palavras = word_tokenize(todos_textos.lower())
-        palavras_filtradas = [
-            palavra for palavra in palavras
-            if palavra not in stop_words and palavra not in tema_princial
-        ]
-
-        # Contar a frequência das palavras e obter as mais comuns
-        contagem_palavras = Counter(palavras_filtradas)
-        palavras_mais_comuns = [palavra for palavra, _ in contagem_palavras.most_common(10)]
-
-        # Armazenar as palavras mais comuns para a categoria
-        palavras_comuns_por_categoria[categoria] = palavras_mais_comuns
-
-    return palavras_comuns_por_categoria
 
 import asyncio
 
