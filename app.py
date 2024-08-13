@@ -10,7 +10,12 @@ import re
 import os
 import datetime
 import difflib
+from collections import Counter
+from nltk.corpus import stopwords
+from nltk.tokenize import word_tokenize
+import nltk
 
+df_resumos = pd.DataFrame()
 
 def get_current_datetime():
   """Returns the current datetime as a string."""
@@ -42,7 +47,7 @@ def clean_text(text):
 
     return text
 
-async def make_api_call_to_gpt(prompt, api_key):    
+async def make_api_call_to_gpt(prompt, api_key, model, temperature):    
     api_key = utils_conf.get_config_value('OPENAI_KEY')
     headers = {
         'Authorization': f'Bearer {api_key}',
@@ -50,9 +55,9 @@ async def make_api_call_to_gpt(prompt, api_key):
     }
     async with aiohttp.ClientSession() as session:                
         payload = {
-            "model": "gpt-4-turbo",
+            "model": model,
             "messages": prompt,
-            "temperature": 0,
+            "temperature": temperature,
             "max_tokens": 2000,
             "top_p": 1,
             "frequency_penalty": 0,
@@ -61,21 +66,19 @@ async def make_api_call_to_gpt(prompt, api_key):
 
         async with session.post('https://api.openai.com/v1/chat/completions', headers=headers, data=json.dumps(payload)) as response:
             if response.status == 200:
-                resp_json = await response.json()
-                #print(resp_json)
+                resp_json = await response.json()                
                 return resp_json['choices'][0]['message']['content']
-            else:
-                print(f"##### ERROR {response.status}")
-                print(response)
+            else:                
+                print(f"make_api_call_to_gpt error: {response}")
                 return f"Error: {response.status}"
 
 
-async def openAiApiCall(messages):    
+async def openAiApiCall(messages, model, temperature):    
     api_key = utils_conf.get_config_value('OPENAI_KEY')
     
     url = "https://api.openai.com/v1/chat/completions"
     headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
-    data = {"model": "gpt-4", "messages": messages, "temperature": 0.1}
+    data = {"model": model, "messages": messages, "temperature": temperature}
     async with aiohttp.ClientSession() as session:
         async with session.post(url, headers=headers, json=data) as response:
             if response.status != 200:
@@ -163,7 +166,7 @@ async def tags_analysis(lista_de_comentarios, tema_principal, contexto, sentimen
     # Gera a lista de tarefas para fazer as chamadas assíncronas para a API
     tasks = []
     for mensagem in lista_mensagens:
-        tasks.append(openAiApiCall(mensagem))
+        tasks.append(openAiApiCall(mensagem, 'gpt-4o-mini', 0.1))
     
 
     # Lista para armazenar as respostas
@@ -217,35 +220,74 @@ JSON para analise:{texto}
     ]
     return messages
 
-def formata_categorias(json_str):
-    # caso a string venha com a palavra json no início
-    json_str = json_str.replace("json", "")
-    # Parse the JSON string
-    data = json.loads(json_str)
+# def formata_categorias(json_str):
+#     # caso a string venha com a palavra json no início
+#     json_str = json_str.replace("json", "")    
+#     json_str = json_str.replace("```", "")
     
-    # Prepare a list to store the rows of the DataFrame
+#     print("Formata Categorias:")
+#     print(json_str)
+#     # Parse the JSON string
+#     try:
+#         data = json.loads(json_str)
+#     except:
+#         print("Erro JSONLOADS!!")
+#         data = json_str
+#     # Prepare a list to store the rows of the DataFrame
+#     rows = []
+
+#     # Loop through each category and its corresponding list of items
+#     for category, items in data.items():
+#         for item in items:
+#             rows.append({"Categoria": category, "Tag": item})
+    
+#     # Create a DataFrame from the list of rows
+#     df = pd.DataFrame(rows)
+    
+#     print("formata_categorias resultado:")
+#     print(df)
+    
+#     return df
+
+import json
+import pandas as pd
+
+def formata_categorias(json_str):
+    # Limpeza dos marcadores de código, caso existam
+    if isinstance(json_str, str):
+        json_str = json_str.replace("json", "").replace("```", "").replace("'", '"').strip()    
+    # Verifica se a entrada já é um dicionário (se a API já retornou um objeto JSON)
+    if not isinstance(json_str, dict):
+        try:
+            # Tenta decodificar a string JSON
+            data = json.loads(json_str)
+        except json.JSONDecodeError as e:
+            # Imprime a mensagem de erro e retorna None se não conseguir decodificar
+            print(f"Erro ao decodificar JSON: {e}")
+            return None
+    else:
+        data = json_str
+
+    # Prepara uma lista para armazenar as linhas do DataFrame
     rows = []
 
-    # Loop through each category and its corresponding list of items
+    # Percorre cada categoria e sua correspondente lista de itens
     for category, items in data.items():
         for item in items:
             rows.append({"Categoria": category, "Tag": item})
-    
-    # Create a DataFrame from the list of rows
+
+    # Cria um DataFrame a partir da lista de linhas
     df = pd.DataFrame(rows)
-    
-    print("formata_categorias resultado:")
-    print(df)
-    
+            
     return df
+
 
 async def refina_categorias(texto):
     print(f"##### Refinando as Categorias...{get_current_datetime()}")
     mensagem = geraMensagens_classificação_refinamento(texto)
     
-    resposta = await openAiApiCall(mensagem)
-    print(f"#### CAtegorias: {resposta}")
-    
+    resposta = await openAiApiCall(mensagem, 'gpt-4o-mini',0.1)        
+                 
     df = formata_categorias(resposta)
     
     return df
@@ -253,7 +295,7 @@ async def refina_categorias(texto):
 async def category_analysis(lista_de_tags, tema_principal, sentimento): 
     print(f"##### Gerando as Categorias...{get_current_datetime()}")       
     mensagem = geraMensagens_categorias(lista_de_tags, tema_principal, sentimento)    
-    resposta = await openAiApiCall(mensagem)                
+    resposta = await openAiApiCall(mensagem, 'gpt-4', 0.1)                
     
     df = await refina_categorias(resposta)
     
@@ -278,6 +320,8 @@ def geraMensagens_classificação(lista_de_comentarios,lista_de_categorias):
 
 def clean_json_string(json_string):
     
+    json_string = json_string.replace("json", '"')
+    json_string = json_string.replace("```", '"')
     # Substitui aspas simples por aspas duplas
     json_string = json_string.replace("'", '"')
     
@@ -301,49 +345,50 @@ def clean_json_string(json_string):
 
     return json_string
 
+# def clean_json_string(text):
+#     # Expressão regular para extrair blocos JSON entre delimitadores
+#     json_blocks = re.findall(r'```json\n({.*?})\n```', text, re.DOTALL)
+
+#     # Dicionário para armazenar o JSON combinado
+#     combined_json = {}
+
+#     # Processa cada bloco JSON encontrado
+#     for block in json_blocks:
+#         # Converte o bloco de string JSON para dicionário
+#         block_dict = json.loads(block)
+        
+#         # Mescla o dicionário extraído no dicionário combinado
+#         for key, value in block_dict.items():
+#             if key in combined_json:
+#                 combined_json[key].extend(value)  # Adiciona a lista existente
+#             else:
+#                 combined_json[key] = value  # Cria nova entrada
+
+#     # Converte o dicionário combinado de volta para JSON
+#     return json.dumps(combined_json, indent=4, ensure_ascii=False)
+
 def formata_classificacao(json_list):
-    print(f"formata_classificacao: {json_list}")
-    
+    print("### formata_classificacao:")
+    #print(json_list)
     rows = []
     
     for json_obj in json_list:
         # Limpa e corrige o JSON string antes de processar
         json_obj = clean_json_string(json_obj)
         try:
-            data = json.loads(json_obj)
-            print(data)
+            data = json.loads(json_obj)            
             for tag, texts in data.items():
                 for text in texts:
                     rows.append({'Tag': tag, 'Texto': text})
         except json.JSONDecodeError as e:
             print(f"Erro ao decodificar JSON: {e}")
     
-    df = pd.DataFrame(rows)
-    print(f"formata_classificacao dataframe: {df}")
+    df = pd.DataFrame(rows)    
     return df
-
-# 
-# def formata_classificacao(json_list):
-#     print(f"formata_classificacao: {json_list}")
-    
-#     rows = []
-    
-#     for json_obj in json_list:
-#         json_obj = json_obj.replace("'", '"')
-#         data = json.loads(json_obj)
-#         for tag, texts in data.items():
-#             for text in texts:
-#                 rows.append({'Tag': tag, 'Texto': text})
-    
-#     df = pd.DataFrame(rows)
-#     print(f"formata_classificacao dataframe: {df}")
-#     return df
     
     
 async def text_classification(lista_de_comentarios,lista_de_tags):
-    print(f"##### Fazendo a Classificação...{get_current_datetime()}")
-    #print(lista_de_comentarios)
-    #print(lista_de_tags)
+    print(f"##### Fazendo a Classificação...{get_current_datetime()}")    
     # Dividir a lista principal de comentários em uma lista menor para fazer as chamadas à API
     aux_list = dividir_lista(lista_de_comentarios, 10)
     
@@ -355,7 +400,7 @@ async def text_classification(lista_de_comentarios,lista_de_tags):
     # Gera a lista de tarefas para fazer as chamadas assíncronas para a API
     tasks = []
     for mensagem in lista_mensagens:
-        tasks.append(openAiApiCall(mensagem))
+        tasks.append(openAiApiCall(mensagem, 'gpt-4', 0.1))
         
     # Lista para armazenar as respostas
     respostas = []
@@ -365,7 +410,7 @@ async def text_classification(lista_de_comentarios,lista_de_tags):
         resposta = await task        
         if resposta != 'Error: 502, <html>\r\n<head><title>502 Bad Gateway</title></head>\r\n<body>\r\n<center><h1>502 Bad Gateway</h1></center>\r\n<hr><center>cloudflare</center>\r\n</body>\r\n</html>\r\n':
             respostas.append(resposta)  
-                
+                    
     df = formata_classificacao(respostas)       
         
     return df
@@ -379,7 +424,7 @@ async def sentiment_analysis(df, api_key, max_per_call=100):
     sentiments = []
     for start in range(0, len(df), max_per_call):
         end = start + max_per_call
-        tasks = [make_api_call_to_gpt(await get_prompt('system',text), api_key) for text in df['texto_limpo'][start:end]]
+        tasks = [make_api_call_to_gpt(await get_prompt('system',text), api_key, "gpt-4o-mini", 0.5) for text in df['texto_limpo'][start:end]]
         sentiments.extend(await asyncio.gather(*tasks))
      
     return sentiments
@@ -413,9 +458,7 @@ async def analise_de_sentimentos(df):
     #Análise de sentimentos
     print(f"##### Fazendo a analise de sentimentos...{get_current_datetime()}")
     df = await (process_sentiments(df))    
-    df['Sentimento'] = df['Sentimento'].replace("Negative", "negativo")
-    df['Sentimento'] = df['Sentimento'].replace("Positive", "positivo")
-    df['Sentimento'] = df['Sentimento'].replace("Neutral", "neutro")
+    df['Sentimento'] = df['Sentimento'].str.lower()    
     #df.to_excel("teste _sentimentos_2.xlsx")     
     
     return df                       
@@ -491,14 +534,14 @@ async def start_classification(lista_de_comentários, tema, context, sentimento)
     #Gera as Categorias
     #try:
     df_categorias = await category_analysis(df_tags['Tag'].to_list(), tema, sentimento)       
-    print(f"##### Categorias: {df_categorias}")
+    print(f"##### CATEGORIAS: {df_categorias}")
     #except Exception as e:
     #    print(f"##### Erro ao as Categorias: {e}")
     
     #Classificação dos textos
         
     df_classificado = ( await text_classification(lista_de_comentários, df_categorias['Tag'].to_list()))            
-    print(f"##### Classificação: {df_classificado}")
+    print(f"##### CLASSIFICAÇÃO: {df_classificado}")
     # except Exception as e:
     #     print(f"##### Erro ao Classificar: {e}")
     
@@ -518,6 +561,7 @@ async def classificacao_com_sentimento(df, tema, context):
 
     print("### Sentimentos:")                    
     print(df)
+    df.to_excel("sentimentos.xlsx")
     
     sentimentos = ["positivo", "neutro", "negativo"]
     all_data = []
@@ -539,9 +583,7 @@ async def classificacao_com_sentimento(df, tema, context):
         all_data.append(df_classificado)
 
     # Concatenar todos os dados classificados em um único DataFrame
-    df_concatenado = pd.concat(all_data, ignore_index=True)
-    #print("### DF CONCATENADO")
-    #print(df_concatenado)
+    df_concatenado = pd.concat(all_data, ignore_index=True)    
     
     final_df = pd.DataFrame()
     # Processar incidências
@@ -625,10 +667,145 @@ def generate_js_dictionary_with_sentiment(file_path='outputs/text_classification
 
 
 
+#-------------------------------- CONTAGEM DE PAALAVRAS ------------------------------------------    
+def extrai_palavras_comuns(df, tema_princial):
+
+    """
+    Agrupa os Textos por Categoria e extrai as palavras mais comuns de cada categoria,
+    desconsiderando stopwords e palavras relacionadas ao tema principal.
+
+    Args:
+        df: DataFrame contendo as colunas 'Texto' e 'Categoria'.
+        tema_princial: Lista de palavras a serem desconsideradas.
+
+    Returns:
+        Um dicionário JSON onde as chaves são as categorias e os valores são as listas
+        com as palavras mais comuns de cada categoria.
+    """
+
+    nltk.download('punkt')
+    nltk.download('stopwords')
+    
+    # Obter stopwords em português
+    stop_words = set(stopwords.words('portuguese'))
+
+    # Agrupar os Textos por Categoria
+    grouped = df.groupby('Categoria')['Texto'].apply(list)
+
+    # Inicializar o dicionário para armazenar as palavras mais comuns
+    palavras_comuns_por_categoria = {}
+
+    # Iterar sobre cada categoria
+    for categoria, textos in grouped.items():
+        # Concatenar todos os textos da categoria em uma única string
+        todos_textos = ' '.join(textos)
+
+        # Tokenizar os textos e remover stopwords e palavras do tema principal
+        palavras = word_tokenize(todos_textos.lower())
+        palavras_filtradas = [
+            palavra for palavra in palavras
+            if palavra not in stop_words and palavra not in tema_princial
+        ]
+
+        # Contar a frequência das palavras e obter as mais comuns
+        contagem_palavras = Counter(palavras_filtradas)
+        palavras_mais_comuns = [palavra for palavra, _ in contagem_palavras.most_common(10)]
+
+        # Armazenar as palavras mais comuns para a categoria
+        palavras_comuns_por_categoria[categoria] = palavras_mais_comuns
+
+    return palavras_comuns_por_categoria
+
+import asyncio
+
+async def resume_textos_por_categoria(df):
+    """
+    Resume os textos agrupados por categoria usando a API do OpenAI.
+
+    Args:
+        df: DataFrame contendo as colunas 'Texto' e 'Categoria'.
+
+    Returns:
+        Um dicionário JSON onde as chaves são as categorias e os valores são os resumos.
+    """
+    # Agrupar os textos por categoria
+    grouped = df.groupby('Categoria')['Texto'].apply(list)
+
+    # Dicionário para armazenar os resumos
+    resumos_por_categoria = {}
+
+    # Lista para armazenar as tarefas assíncronas
+    tasks = []
+
+    # Criar tarefas para cada categoria
+    for categoria, textos in grouped.items():
+        todos_textos = ' '.join(textos)
+
+        # Criar a mensagem para a API do OpenAI
+        messages = [
+            {"role": "system", "content": """Tarefa: O usuário irá inserir uma lista de comentários de redes sociais. Seu trabalho é resumir em no máximo 200 caracteres a lista de textos em um único parágrafo consiso e objetivo. Não utilize o caractere " nos resumos. Em seguida mostre as principais palavras chave dos textos.
+Output: Json no formato {"resumo": "resumo gerado", "palavraschave" : "Lista com as palavras chave"}"""},
+            {"role": "user", "content": f"Input:\n{todos_textos}"}
+        ]        
+        task = openAiApiCall(messages, 'gpt-4', 0.1)  # Supondo que essa função existe e é assíncrona
+        # messages = [
+        #     {"role": "system", "content": "O usuário irá inserir uma lista de comentários de redes sociais. Seu trabalho é reumir em no máximo 200 caracteres a lista de textos em um único parágrafo consiso e objetivo.Em seguida mostre as principais palavras chave dos textos.Insira uma quebra de linha após o resumo"},
+        #     {"role": "user", "content": f"Lista de comentários:\n\n{todos_textos}"}
+        # ]        
+        # task = openAiApiCall(messages, 'gpt-4o-mini', 0.5)  # Supondo que essa função existe e é assíncrona
+        tasks.append((categoria, task))
+
+    # Aguardar todas as tarefas serem completadas usando asyncio.gather
+    results = await asyncio.gather(*[task for _, task in tasks])
+
+    # # Dicionário para armazenar os resumos
+    # resumos_por_categoria = {}
+    # for (categoria, _), resumo in zip(tasks, results):
+    #     resumos_por_categoria[categoria] = resumo
+
+     # Dicionário para armazenar os resumos
+    resumos_por_categoria = {}
+    categorias_data = []
+    
+    for (categoria, _), result in zip(tasks, results):        
+        result = result.replace("'", '"')
+        result = result.replace("```json", '"')
+        result = result.replace("```", '"')
+        result = result.replace("Output:", '')
+        result = result.strip('`')                        
+        resumo_json = json.loads(result)  # Supõe-se que 'result' é um JSON como string
+        categorias_data.append({
+            "Categoria": categoria,
+            "Resumo": resumo_json.get("resumo", ""),
+            "PalavrasChave": resumo_json.get("palavraschave", "")
+        })
+        
+        # resumos_por_categoria[categoria] = {
+        #     "resumo": resumo_json.get("resumo"),
+        #     "palavraschave": resumo_json.get("palavraschave")
+        # }
+    
+    #return resumos_por_categoria
+    return pd.DataFrame(categorias_data)
+
+async def gera_resumo_conclusão(df):
+    
+    messages = [
+            {"role": "system", "content": """Tarefa: O texto abaixo é o resultado de uma análise de vários comentários de redes sociais a respeito de um tema. Faça um resumo qualitativo e quantitativo e no máximo 2 parágrafos da análise. Seja objetivo e conciso. Nao utilize o caracter " no resumo.
+Output: Somente o parágrafo, sem nenhuma outra informação"""},
+            {"role": "user", "content": f"Input:\n{df.to_string()}"}]
+    
+    resultado = await openAiApiCall(messages, 'gpt-4o-mini', 0.5) 
+    
+    print(resultado)
+    
+    return resultado
+    
+#-------------------------------- ROUTES ------------------------------------------------------
+
 app = Flask(__name__)
 CORS(app)
 
-#-------------------------------- ROUTES ------------------------------------------------------
 @app.route('/')
 def home():    
     
@@ -643,7 +820,14 @@ def tweetssearch():
         data = request.get_json()    
         query = data.get('query', None)        
         max_results = data.get('max_tweets', None)                          
-        b_token = utils_conf.get_config_value('bearer_token')                        
+        twitter_account = data.get('twitterAccount', None)  
+        
+        # Verifica para qual conta do twitter será feita a requisição
+        if twitter_account == 0:                        
+            b_token = utils_conf.get_config_value('bearer_token_0')                        
+        else:
+            b_token = utils_conf.get_config_value('bearer_token_1')                        
+            
         df = tweets_search(query,b_token,"lang:pt" ,max_results)    
         json_data = df.to_json(orient='records')        
                 
@@ -666,35 +850,14 @@ async def getclassifications():
         
         final_df = await classificacao_com_sentimento(df_input,tema, context)
         
-        print("### RESULTADO FINAL DA CLASSIFICAÇÃO:")
-        print(final_df)       
+        #print("### RESULTADO FINAL DA CLASSIFICAÇÃO:")
+        #print(final_df)       
                                                     
         print(f"##### Processo finalizado...{get_current_datetime()}")
                         
         return jsonify(json_data=final_df.to_json(orient = 'records')), 200
     else:
-        return jsonify({"error": "Column 'Texto' not found"}), 400
-
-    # if request.is_json:    
-    #     data = request.get_json()    
-    #     context = data.get('context', None)
-    #     tema = data.get('tema', None)        
-    #     # # Get the JSON data       
-    #     df = pd.read_excel('outputs/tweets_search_output.xlsx')    
-    #     #result = text_classification(df, context, tema)           
-    #     if 'Texto' in df.columns:
-    #         textos = df['Texto']
-    #         df = pd.DataFrame(textos)                      
-    #         df['texto_limpo']  = df['Texto'].apply(clean_text)
-    #         lista_de_comentários = df['texto_limpo'].to_list()                                        
-            
-    #         json_data = await start_classification(lista_de_comentários, tema, context)
-                                
-    #         return jsonify(json_data=json_data), 200
-        
-        
-    # return jsonify({"error": "Erro"}), 400      
-
+        return jsonify({"error": "Column 'Texto' not found"}), 400    
 #--------------------------------------------------------------------------------------
 @app.route('/api/getclassificationsbyfilenew', methods=['POST'])
 async def getclassificationsbyfilenew():           
@@ -710,13 +873,13 @@ async def getclassificationsbyfilenew():
     if file:        
             df_input = pd.read_excel(file)                                                            
             if 'Texto' in df_input.columns:                
-                df_input = df_input.head(2000)                
+                df_input = df_input.head(1000)                
                 df_input['texto_limpo']  = df_input['Texto'].apply(clean_text)
                 
                 final_df = await classificacao_com_sentimento(df_input,tema, context)
                 
-                print("### RESULTADO FINAL DA CLASSIFICAÇÃO:")
-                print(final_df)       
+                #print("### RESULTADO FINAL DA CLASSIFICAÇÃO:")
+                #print(final_df)       
                                                             
                 print(f"##### Processo finalizado...{get_current_datetime()}")
                                 
@@ -741,16 +904,9 @@ def getchartdatagrouped():
 @app.route('/api/getkeys', methods=['GET'])
 def getkeys():
     try:
-        keys = []
-        #keys.append(utils_conf.get_config_value('bearer_token'))
-        #keys.append(utils_conf.get_config_value('OPENAI_KEY'))
-        keys.append(utils_conf.get_config_value('max_tweets'))
-        #keys.append(utils_conf.get_config_value('max_len_tags'))
-        #keys.append(utils_conf.get_config_value('max_len_class'))
-        #keys.append(utils_conf.get_config_value('tagQTD'))
-        #keys.append(utils_conf.get_config_value('classificQTD'))
+        keys = []        
+        keys.append(utils_conf.get_config_value('max_tweets'))        
         
-        print(f"#### Data sent {keys}")
     except:
         return jsonify("Erro ao carregar as APIs")            
         
@@ -761,22 +917,10 @@ def setkeys():
     if request.is_json:
         # Get the JSON data
         data = request.get_json()    
-        print(f"##### Config received: {data}")
-        #twitter_key = data.get('bearer_token', None)
-        #openai_key = data.get('openai_key', None)
-        max_tweets = data.get('max_tweets', None)
-        #max_len_tags = data.get('max_len_tags', None)
-        #max_len_class = data.get('max_len_class', None)
-        #tagQTD = data.get('tagQTD', None)
-        #classificQTD = data.get('classificQTD', None)
         
-        #utils_conf.update_config_file('bearer_token', twitter_key)
-        #utils_conf.update_config_file('OPENAI_KEY', openai_key)
+        max_tweets = data.get('max_tweets', None)
+                
         utils_conf.update_config_file('max_tweets', str(max_tweets))
-        #utils_conf.update_config_file('max_len_tags', str(max_len_tags))
-        #utils_conf.update_config_file('max_len_class', str(max_len_class))
-        #utils_conf.update_config_file('tagQTD', str(tagQTD))
-        #utils_conf.update_config_file('classificQTD', str(classificQTD))                
         
         print("##### Config Updated!")
         return jsonify('200')            
@@ -793,32 +937,29 @@ def downloadsearch(filename='tweets_search_output.xlsx'):
 def downloadclassification(filename='text_classification_output.xlsx'):
     return send_from_directory('outputs', filename, as_attachment=True)
   
-#--------------------------------------------------------------------------------------    
-@app.route('/api/getsummary', methods=['GET'])
-async def getsummary():       
-    print(f"##### Gerando Resumo...{get_current_datetime()}") 
-    #Le o dataframe
-    df = pd.read_excel("outputs/text_classification_output.xlsx", sheet_name=1)
-    #Transforma em texto (ou json)
-    texto_total = df.to_string()
+@app.route('/api/getwordscount', methods=['POST'])
+async def getwordscount():
+     global df_resumos
+     
+     df = pd.read_excel("outputs/text_classification_output.xlsx", sheet_name=1)     
+     
+     result = await resume_textos_por_categoria(df)
+
+     df_resumos = result
+            
+     # Convertendo DataFrame diretamente para JSON
+     json_result = result.to_json(orient="records", force_ascii=False)
+                   
+     return jsonify(json_data=json_result)     
+ 
+@app.route('/api/getconclusion', methods=['GET'])
+async def getconclusion(): 
+    global df_resumos
+        
+    resultado = await gera_resumo_conclusão(df_resumos)
+         
+    return jsonify(conclusao=resultado)  
+ 
     
-    #Envia para a api resumir
-    message = [
-        {"role": "system", "content": f"""Leia o dataframe no formato de texto abaixo e me retorne um resumo de cada Categoria.
-         Separe as categorias em Tópicos, informando as palavras chave e o sentimento predominante na categoria
-         Dataframe:
-         {texto_total}
-"""}
-   ]
-    
-    resultado = await openAiApiCall(message)                    
-    print(resultado)
-    #Retorna o resumo como texto ao frontckend      
-    print(f"##### Enviando resumo...{get_current_datetime()}")   
-    return resultado
-
-#--------------------------------------------------------------------------------------    
-
-
 if __name__ == '__main__':
     app.run(debug=True, port=8080)
