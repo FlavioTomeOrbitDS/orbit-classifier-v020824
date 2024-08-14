@@ -20,28 +20,31 @@ def get_current_datetime():
   return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 def clean_text(text):
-    # Remove a sequência "RT :"
-    text = text.replace("RT", "").strip()
-    # Remove a palavra "sentimento"
-    text = text.replace("sentimento", "").strip()
-    # Remove "Comentário" e suas variações
-    text = re.sub(r'^Comentário\s*\d*:\s*', '', text)
-    # Remove números iniciais
-    text = re.sub(r'^\d+\.\s*', '', text)
-    # Remove aspas simples e duplas
-    text = text.replace("'", "").replace('"', "")
-    # Remove pontuações iniciais
-    text = text.lstrip(".'\"")
-    # Remove URLs
-    text = re.sub(r'https?://\S+|www\.\S+', '', text)
-    # Remove menções
-    text = re.sub(r'@\w+', '', text)
-    # Remove hashtags
-    text = re.sub(r'#\w+', '', text)
-    # Remove emojis e outros caracteres não alfanuméricos, exceto espaços, vírgulas
-    text = re.sub(r'[^\w\s,]', '', text)
-    # Remove espaços extras no início e no final do texto
-    text = text.strip()
+    try:
+        # Remove a sequência "RT :"
+        text = text.replace("RT", "").strip()
+        # Remove a palavra "sentimento"
+        text = text.replace("sentimento", "").strip()
+        # Remove "Comentário" e suas variações
+        text = re.sub(r'^Comentário\s*\d*:\s*', '', text)
+        # Remove números iniciais
+        text = re.sub(r'^\d+\.\s*', '', text)
+        # Remove aspas simples e duplas
+        text = text.replace("'", "").replace('"', "")
+        # Remove pontuações iniciais
+        text = text.lstrip(".'\"")
+        # Remove URLs
+        text = re.sub(r'https?://\S+|www\.\S+', '', text)
+        # Remove menções
+        text = re.sub(r'@\w+', '', text)
+        # Remove hashtags
+        text = re.sub(r'#\w+', '', text)
+        # Remove emojis e outros caracteres não alfanuméricos, exceto espaços, vírgulas
+        text = re.sub(r'[^\w\s,]', '', text)
+        # Remove espaços extras no início e no final do texto
+        text = text.strip()
+    except:
+        text = ""
 
     return text
 
@@ -678,10 +681,7 @@ async def resume_textos_por_categoria(df):
         Um dicionário JSON onde as chaves são as categorias e os valores são os resumos.
     """
     # Agrupar os textos por categoria
-    grouped = df.groupby('Categoria')['Texto'].apply(list)
-
-    # Dicionário para armazenar os resumos
-    resumos_por_categoria = {}
+    grouped = df.groupby('Categoria')['Texto'].apply(list)    
 
     # Lista para armazenar as tarefas assíncronas
     tasks = []
@@ -692,64 +692,67 @@ async def resume_textos_por_categoria(df):
 
         # Criar a mensagem para a API do OpenAI
         messages = [
-            {"role": "system", "content": """Tarefa: O usuário irá inserir uma lista de comentários de redes sociais. Seu trabalho é resumir em no máximo 200 caracteres a lista de textos em um único parágrafo consiso e objetivo. Não utilize o caractere " nos resumos. Em seguida mostre as principais palavras chave dos textos.
-Output: Json no formato {"resumo": "resumo gerado", "palavraschave" : "Lista com as palavras chave"}"""},
+#             {"role": "system", "content": """Tarefa: O usuário irá inserir uma lista de comentários de redes sociais. Seu trabalho é resumir em no máximo 200 caracteres a lista de textos em um único parágrafo consiso e objetivo. Não utilize o caractere " nos resumos. Em seguida mostre as principais palavras chave dos textos.
+# Output: Json no formato {"resumo": "resumo gerado", "palavraschave" : "Lista com as palavras chave"}"""},
+            {"role": "system",
+                    "content": """Tarefa: Analise uma lista de comentários de redes sociais e produza um resumo conciso. O resumo deve ter até 200 caracteres, focando nos principais pontos discutidos. Evite usar aspas duplas para garantir a compatibilidade com formatos JSON. Após o resumo, identifique e liste as principais palavras-chave associadas aos textos. Output esperado: {"resumo": "resumo gerado", "palavraschave" : "Lista com as palavras chave"}"""
+            },
             {"role": "user", "content": f"Input:\n{todos_textos}"}
         ]        
         task = openAiApiCall(messages, 'gpt-4', 0.1)  # Supondo que essa função existe e é assíncrona
-        # messages = [
-        #     {"role": "system", "content": "O usuário irá inserir uma lista de comentários de redes sociais. Seu trabalho é reumir em no máximo 200 caracteres a lista de textos em um único parágrafo consiso e objetivo.Em seguida mostre as principais palavras chave dos textos.Insira uma quebra de linha após o resumo"},
-        #     {"role": "user", "content": f"Lista de comentários:\n\n{todos_textos}"}
-        # ]        
-        # task = openAiApiCall(messages, 'gpt-4o-mini', 0.5)  # Supondo que essa função existe e é assíncrona
+        
         tasks.append((categoria, task))
 
     # Aguardar todas as tarefas serem completadas usando asyncio.gather
     results = await asyncio.gather(*[task for _, task in tasks])
-
-    # # Dicionário para armazenar os resumos
-    # resumos_por_categoria = {}
-    # for (categoria, _), resumo in zip(tasks, results):
-    #     resumos_por_categoria[categoria] = resumo
-
+    
      # Dicionário para armazenar os resumos
-    resumos_por_categoria = {}
+    
     categorias_data = []
     
     for (categoria, _), result in zip(tasks, results):        
+       try:
         result = result.replace("'", '"')
         result = result.replace("```json", '"')
         result = result.replace("```", '"')
         result = result.replace("Output:", '')
         result = result.strip('`')                        
         resumo_json = json.loads(result)  # Supõe-se que 'result' é um JSON como string
-        categorias_data.append({
+       except:
+          resumo_json = {"resumo" : "Não foi possível gerar o resumo" , "palavraschave" : "Não foi possível gerar as Palavras-Chave"}
+          print(f"Erro ao gerar o resumo de: {result}")
+        
+       categorias_data.append({
             "Categoria": categoria,
             "Resumo": resumo_json.get("resumo", ""),
             "PalavrasChave": resumo_json.get("palavraschave", "")
         })
-        
-        # resumos_por_categoria[categoria] = {
-        #     "resumo": resumo_json.get("resumo"),
-        #     "palavraschave": resumo_json.get("palavraschave")
-        # }
-    
+            
     #return resumos_por_categoria
     return pd.DataFrame(categorias_data)
 
 async def gera_resumo_conclusão(df):
-    
     messages = [
-            {"role": "system", "content": """Tarefa: O texto abaixo é o resultado de uma análise de vários comentários de redes sociais a respeito de um tema. Faça um resumo qualitativo e quantitativo e no máximo 2 parágrafos da análise. Seja objetivo e conciso. Nao utilize o caracter " no resumo.
-Output: Somente o parágrafo, sem nenhuma outra informação"""},
-            {"role": "user", "content": f"Input:\n{df.to_string()}"}]
-    
-    resultado = await openAiApiCall(messages, 'gpt-4o-mini', 0.5) 
-    
-    print(resultado)
-    
-    return resultado
-    
+        {
+            "role": "system",
+            "content": "Tarefa: Faça um resumo qualitativo e quantitativo dos comentários sobre um tema específico, utilizando até dois parágrafos. Seja objetivo e conciso. Evite o uso de aspas duplas no texto para garantir a compatibilidade com formatos JSON. Output esperado: um parágrafo sem informações adicionais ou caracteres especiais que possam afetar a estrutura JSON."
+        },
+        {
+            "role": "user",
+            "content": f"Input:\n{df.to_string()}"
+        }
+    ]
+
+    try:
+        resultado = await openAiApiCall(messages, 'gpt-4o-mini', 0.5)  # Chamada à API        
+        
+        return jsonify(conclusao=resultado)
+    except Exception as e:
+        print(f"Erro ao processar a requisição: {e}")
+        print(f"{resultado}")
+        
+        # Retorna uma mensagem de erro no formato JSON
+        return jsonify(erro="Houve um erro ao gerar a Conclusão. Por favor tente novamente mais tarde.")    
 #-------------------------------- ROUTES ------------------------------------------------------
 
 app = Flask(__name__)
@@ -904,10 +907,14 @@ async def getwordscount():
 @app.route('/api/getconclusion', methods=['GET'])
 async def getconclusion(): 
     global df_resumos
-        
-    resultado = await gera_resumo_conclusão(df_resumos)
+    
+    try:        
+        resultado = await gera_resumo_conclusão(df_resumos)
          
-    return jsonify(conclusao=resultado)  
+        return resultado
+    except:
+        print(f"Erro na conclusão final {resultado}")
+        return jsonify(conclusao = "Não foi possível gerar a conclusão")
  
     
 if __name__ == '__main__':

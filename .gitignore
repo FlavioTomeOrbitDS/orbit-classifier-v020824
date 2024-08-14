@@ -2,3 +2,4 @@ __pycache__
 conf/.env
 conf/config.txt
 venv
+outputs/text_classification_output.xlsx
