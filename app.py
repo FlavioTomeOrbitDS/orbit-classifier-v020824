@@ -525,27 +525,23 @@ def processar_incidencias(data, df_final, file_path):
         return pd.DataFrame()
         
 async def start_classification(lista_de_comentários, tema, context, sentimento):                    
-    #Gera as Tags
+    #******************* Gera as Tags
     try:        
         df_tags = ( await tags_analysis(lista_de_comentários, tema, context, sentimento))            
         print(f"##### TAGS {df_tags}")
     except Exception as e:
         print(f"##### Erro ao gerar Tag: {e}")
-    #Gera as Categorias
-    #try:
+    #******************* Gera as Categorias
+    
     df_categorias = await category_analysis(df_tags['Tag'].to_list(), tema, sentimento)       
     print(f"##### CATEGORIAS: {df_categorias}")
-    #except Exception as e:
-    #    print(f"##### Erro ao as Categorias: {e}")
     
-    #Classificação dos textos
-        
+    #******************* Classificação dos textos        
     df_classificado = ( await text_classification(lista_de_comentários, df_categorias['Tag'].to_list()))            
     print(f"##### CLASSIFICAÇÃO: {df_classificado}")
-    # except Exception as e:
-    #     print(f"##### Erro ao Classificar: {e}")
     
-    #GEra arquuivo final 
+    
+    #******************* Gera arquuivo final 
     try:
         df_final = gera_df_final(df_classificado,df_categorias)        
         df_final["Sentimento"] = sentimento        
@@ -559,8 +555,8 @@ async def classificacao_com_sentimento(df, tema, context):
     #Analise de sentimentos
     df = await analise_de_sentimentos(df)
 
-    print("### Sentimentos:")                    
-    print(df)    
+    #print("### Sentimentos:")                    
+    #print(df)    
     
     sentimentos = ["positivo", "neutro", "negativo"]
     all_data = []
@@ -695,11 +691,16 @@ async def resume_textos_por_categoria(df):
 #             {"role": "system", "content": """Tarefa: O usuário irá inserir uma lista de comentários de redes sociais. Seu trabalho é resumir em no máximo 200 caracteres a lista de textos em um único parágrafo consiso e objetivo. Não utilize o caractere " nos resumos. Em seguida mostre as principais palavras chave dos textos.
 # Output: Json no formato {"resumo": "resumo gerado", "palavraschave" : "Lista com as palavras chave"}"""},
             {"role": "system",
-                    "content": """Tarefa: Analise uma lista de comentários de redes sociais e produza um resumo conciso. O resumo deve ter até 200 caracteres, focando nos principais pontos discutidos. Evite usar aspas duplas para garantir a compatibilidade com formatos JSON. Após o resumo, identifique e liste as principais palavras-chave associadas aos textos. Output esperado: {"resumo": "resumo gerado", "palavraschave" : "Lista com as palavras chave"}"""
+                    "content": """Tarefa: Analise uma lista de comentários de redes sociais e produza um resumo conciso.
+                    Observações:
+                    1. O resumo deve ter até 200 caracteres, focando nos principais pontos discutidos.
+                    2. Não utilize aspas duplas para garantir a compatibilidade com formatos JSON.
+                    3. Após o resumo, identifique e liste as principais palavras-chave associadas aos textos. 
+                    Output esperado: {"resumo": "resumo gerado", "palavraschave" : "Lista com as palavras chave"}"""
             },
             {"role": "user", "content": f"Input:\n{todos_textos}"}
         ]        
-        task = openAiApiCall(messages, 'gpt-4', 0.1)  # Supondo que essa função existe e é assíncrona
+        task = openAiApiCall(messages, 'gpt-4', 0.2)  # Supondo que essa função existe e é assíncrona
         
         tasks.append((categoria, task))
 
@@ -797,7 +798,7 @@ async def getclassifications():
     
     df_input = pd.read_excel('outputs/tweets_search_output.xlsx')                                                            
     if 'Texto' in df_input.columns:                
-        df_input = df_input.head(2000)                
+        df_input = df_input.head(3000)                
         df_input['texto_limpo']  = df_input['Texto'].apply(clean_text)
         
         final_df = await classificacao_com_sentimento(df_input,tema, context)
@@ -825,7 +826,7 @@ async def getclassificationsbyfilenew():
     if file:        
             df_input = pd.read_excel(file)                                                            
             if 'Texto' in df_input.columns:                
-                df_input = df_input.head(1000)                
+                df_input = df_input.head(3000)                
                 df_input['texto_limpo']  = df_input['Texto'].apply(clean_text)
                 
                 final_df = await classificacao_com_sentimento(df_input,tema, context)
