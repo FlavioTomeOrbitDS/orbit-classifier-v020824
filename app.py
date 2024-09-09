@@ -10,7 +10,7 @@ import re
 import os
 import datetime
 import difflib
-
+from chat import *
 
 
 df_resumos = pd.DataFrame()
@@ -583,6 +583,11 @@ async def classificacao_com_sentimento(df, tema, context):
     final_df = pd.DataFrame()
     # Processar incidências
     final_df = processar_incidencias(df_concatenado, final_df,"outputs/text_classification_output.xlsx")
+    
+    #treina o assistente com os resultados    
+    global messages_list
+    message = await dataset_training()
+    messages_list.append(message)
         
     return final_df    
 
@@ -696,7 +701,8 @@ async def resume_textos_por_categoria(df):
                     1. O resumo deve ter até 200 caracteres, focando nos principais pontos discutidos.
                     2. Não utilize aspas duplas para garantir a compatibilidade com formatos JSON.
                     3. Após o resumo, identifique e liste as principais palavras-chave associadas aos textos. 
-                    Output esperado: {"resumo": "resumo gerado", "palavraschave" : "Lista com as palavras chave"}"""
+                    4. Gere um comentário sintetizado em uma frase no mesmo estilo dos comentários analisados.
+                    Output esperado: {"resumo": "resumo gerado", "palavraschave" : "Lista com as palavras chave", "comentario" : "comentário gerado"}"""
             },
             {"role": "user", "content": f"Input:\n{todos_textos}"}
         ]        
@@ -726,7 +732,8 @@ async def resume_textos_por_categoria(df):
        categorias_data.append({
             "Categoria": categoria,
             "Resumo": resumo_json.get("resumo", ""),
-            "PalavrasChave": resumo_json.get("palavraschave", "")
+            "PalavrasChave": resumo_json.get("palavraschave", ""),
+            "Comentario": resumo_json.get("comentario", ""),
         })
             
     #return resumos_por_categoria
@@ -736,16 +743,25 @@ async def gera_resumo_conclusão(df):
     messages = [
         {
             "role": "system",
-            "content": "Tarefa: Faça um resumo qualitativo e quantitativo dos comentários sobre um tema específico, utilizando até dois parágrafos. Seja objetivo e conciso. Evite o uso de aspas duplas no texto para garantir a compatibilidade com formatos JSON. Output esperado: um parágrafo sem informações adicionais ou caracteres especiais que possam afetar a estrutura JSON."
+            "content": """"
+            O usuário irá inserir um dataset no formato csv.
+            Tarefa: Faça um resumo qualitativo e quantitativo dos comentários sobre um tema específico. Seja objetivo e conciso. Evite o uso de aspas duplas no texto para garantir a compatibilidade com formatos JSON.
+Separe o resumo em 3 Seções:
+- Análise de sentimentos: Nessa parte vc irá analisar os 3 sentimentos do Input, separando em 3 subseções: positivo, neutro e negativo.
+- Análise Quantitativa x Qualitativa: nessa seção, faça uma análise quantitativa dos resultados juntamente com uma analise qualitativa.
+- Análise Final: aqui você deve atuar como uma analista de dados experiente, informando insights ou evidenciando dados que podem ser extraidos da analise.
+Formato de Saída: Markdown, onde o maior nível de parágrafo seja ####. Utilize espaçamentos conforme os níveis de parágrafo
+            """
         },
         {
             "role": "user",
-            "content": f"Input:\n{df.to_string()}"
+            "content": f"Input:\n{df.to_csv()}"
         }
     ]
 
     try:
-        resultado = await openAiApiCall(messages, 'gpt-4o-mini', 0.5)  # Chamada à API        
+        resultado = await openAiApiCall(messages, 'gpt-4o-mini', 0.5)  # Chamada à API     
+        print(f"RESULTADO CONCLUSAO: {resultado}")   
         
         return jsonify(conclusao=resultado)
     except Exception as e:
@@ -754,6 +770,68 @@ async def gera_resumo_conclusão(df):
         
         # Retorna uma mensagem de erro no formato JSON
         return jsonify(erro="Houve um erro ao gerar a Conclusão. Por favor tente novamente mais tarde.")    
+    
+
+messages_list = []        
+async def chat(prompt):
+    global messages_list
+    #se o assistente nao foi inicializado
+    if messages_list == []:
+        #inicializa o chat com as instruções de how to use do Classifier
+        messages_list.append(await how_to_use_training())                      
+        messages_list.append({"role": "user", "content" : prompt})
+                                        
+        response = await openAiApiCall(messages_list,"gpt-4o-mini", 1)
+        
+        messages_list.append({"role": "assistant", "content" : response})
+        
+        return response
+        
+    messages_list.append({"role": "user", "content" : prompt})
+    response = await openAiApiCall(messages_list, "gpt-4o-mini", 1)
+    
+    print(response)
+    
+    return response
+
+
+#Realise a analise geral do dataframe por partes: Sentimentos; Analise Quantitativa x Qualitativa
+async def analise_geral(df):
+    messages = [
+        {
+            "role": "system",
+            "content": """""Você será treinado para atuar como um analista de dados, realizando uma análise qualitativa em um dataset fornecido. A seguir estão as instruções para cada etapa da análise que você deve realizar:
+Etapas da Análise:
+Análise Qualitativa:
+Examine os temas, tópicos ou padrões emergentes no dataset.
+Destaque exemplos específicos que representem diferentes sentimentos, tendências ou opiniões.
+Explore o contexto de categorias e subcategorias para identificar as nuances nas interações e discussões.
+Relate insights que não são evidentes apenas pela análise quantitativa.
+Resumo Analítico:
+Resuma as descobertas mais importantes com base nas análises quantitativa e qualitativa.
+Extraia as informações mais relevantes do dataset, destacando tendências gerais, pontos críticos, e observações notáveis.
+Ofereça recomendações ou conclusões que possam ser extraídas a partir da análise completa.
+Lembre-se de fornecer respostas claras, organizadas e detalhadas em cada etapa.
+Observação: Substitua a palavra "categoria" por "grupo" e "tag" por "assunto".
+O maior nível de cabeçalho deve ser ###.
+Numere as Etapas e Subetapas para melhor organização a partir do número 2
+            """
+        },
+        {
+            "role": "user",
+            "content": f"Input:\n{df.to_json(force_ascii=False, orient='records')}"
+        }
+    ]
+
+    try:
+        resultado = await openAiApiCall(messages, 'gpt-4-turbo', 0.5)  # Chamada à API        
+        
+        return resultado
+    except Exception as e:
+        print(f"Erro ao processar a requisição: {e}")
+        
+        
+    
 #-------------------------------- ROUTES ------------------------------------------------------
 
 app = Flask(__name__)
@@ -766,6 +844,59 @@ def home():
     
 
 #--------------------------------TWEETS SEARCH------------------------------------------------------
+@app.route('/api/getanalisegeral', methods = ['GET'])
+async def getanalisegeral():        
+    df = pd.read_excel("outputs/text_classification_output.xlsx");
+
+    total_comentarios_sentimento = [0,0,0]
+    total_percent_sentimento = [0,0,0]
+    total_comentarios = 0
+    analise_qualitativa_conclusão = ""
+
+    print("Gerando analise Quantitativa:")
+
+    total_comentarios = df['Incidência'].sum()
+
+    aux_df = df[ df["Sentimento"] == 'positivo']
+    soma = aux_df['Incidência'].sum()
+    soma_percent = aux_df['% no Arquivo Geral'].sum()
+    total_percent_sentimento [0] = round(soma_percent,1)
+    total_comentarios_sentimento[0] = soma
+
+    aux_df = df[ df["Sentimento"] == 'neutro']
+    soma = aux_df['Incidência'].sum()
+    total_comentarios_sentimento[1] = soma
+    soma_percent = aux_df['% no Arquivo Geral'].sum()
+    total_percent_sentimento [1] = round(soma_percent,1)
+
+    aux_df = df[ df["Sentimento"] == 'negativo']
+    soma = aux_df['Incidência'].sum()
+    total_comentarios_sentimento[2] = soma
+    soma_percent = aux_df['% no Arquivo Geral'].sum()
+    total_percent_sentimento [2] = round(soma_percent,1)
+
+    print(total_comentarios_sentimento)
+    print(total_percent_sentimento)
+
+    print("Gerando analise qualitativa:")
+    analise_qualitativa_conclusão = await analise_geral(df)
+
+    relatorio_final = f"""    
+### 1. Análise Quantitativa:
+
+**Total de Comentários Classificados:** {total_comentarios}
+
+**Total de Comentários com Sentimento Positivo:** {total_comentarios_sentimento[0]}({total_percent_sentimento[0]}%)
+
+**Total de Comentários com Sentimento Neutro:** {total_comentarios_sentimento[1]}({total_percent_sentimento[1]}%)
+
+**Total de Comentários com Sentimento Negativo:** {total_comentarios_sentimento[2]}({total_percent_sentimento[2]}%)
+
+{analise_qualitativa_conclusão}
+    """
+        
+    return jsonify (response = relatorio_final)
+
 @app.route('/api/tweetssearch', methods=['POST'])
 def tweetssearch():
     if request.is_json:
@@ -902,21 +1033,30 @@ async def getwordscount():
             
      # Convertendo DataFrame diretamente para JSON
      json_result = result.to_json(orient="records", force_ascii=False)
-                   
+                      
+     
      return jsonify(json_data=json_result)     
  
 @app.route('/api/getconclusion', methods=['GET'])
-async def getconclusion(): 
-    global df_resumos
-    
+async def getconclusion():         
+    df = pd.read_excel("outputs/text_classification_output.xlsx", sheet_name = 0)
     try:        
-        resultado = await gera_resumo_conclusão(df_resumos)
+        resultado = await gera_resumo_conclusão(df)
          
         return resultado
     except:
         print(f"Erro na conclusão final {resultado}")
         return jsonify(conclusao = "Não foi possível gerar a conclusão")
  
+@app.route('/api/getchat', methods=['POST'])
+async def getchat(): 
+    data = request.get_json()            
+    prompt = data.get('prompt', None)
+                
+    assistant_response = await chat(prompt)
+    print(assistant_response)
+    
+    return jsonify(assistant = assistant_response)
     
 if __name__ == '__main__':
     app.run(debug=True, port=8080)
